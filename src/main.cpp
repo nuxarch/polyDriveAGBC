@@ -1,6 +1,12 @@
 #include <Arduino.h>
 #include <SimpleFOC.h>
 #include "DRV8301.h"
+
+// KONFIGURASI
+float resistansi_motor = 1.2; // naikkan per 0.1 untuk menaikkan torsi dan rpm maksimal
+float arus_maksimal = 4;
+float tegangan_baterai = 40;
+
 float target_velocity;
 int delay_test = 5000;
 #define THROTTLE_PIN 33
@@ -19,7 +25,7 @@ BLDCDriver3PWM driver = BLDCDriver3PWM(INH_A, INH_B, INH_C, EN_GATE);
 
 // SENSOR
 // HallSensor sensor = HallSensor(32, 35, 34, 13);
-HallSensor sensor = HallSensor(32, 35, 33, 23);
+HallSensor sensor = HallSensor(35, 33, 32, 23);
 void doA() { sensor.handleA(); }
 void doB() { sensor.handleB(); }
 void doC() { sensor.handleC(); }
@@ -49,10 +55,10 @@ void angle_PID()
 void limits()
 {
     // motor.phase_resistance = 2.5;
-    motor.phase_resistance = 1.5;
+    motor.phase_resistance = resistansi_motor;
     motor.velocity_limit = 20; // 2.0;
     motor.voltage_limit = 20;
-    motor.current_limit = 3; // 1.0;
+    motor.current_limit = arus_maksimal; // 1.0;
 }
 
 xTaskHandle taskBlinkHandle;
@@ -110,7 +116,7 @@ void init_board()
     digitalWrite(OC_ADJ, HIGH);
     // driver config
     // power supply voltage [V]
-    driver.voltage_power_supply = 45;
+    driver.voltage_power_supply = tegangan_baterai;
     driver.init();
     // link the motor and the driver
     motor.linkDriver(&driver);
@@ -229,7 +235,7 @@ void setup()
 void loop()
 {
     motor.move(target_velocity);
-    motor.monitor();
-    motor.loopFOC();
+    // motor.monitor();
+    // motor.loopFOC();
     command.run();
 }
