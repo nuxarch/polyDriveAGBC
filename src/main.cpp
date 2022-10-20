@@ -3,8 +3,8 @@
 #include "DRV8301.h"
 
 // KONFIGURASI
-float resistansi_motor = 1.2; // naikkan per 0.1 untuk menaikkan torsi dan rpm maksimal
-float arus_maksimal = 4;
+float resistansi_motor = 2.0; // naikkan per 0.1 untuk menaikkan torsi dan rpm maksimal
+float arus_maksimal = 5;
 float tegangan_baterai = 40;
 
 float target_velocity;
@@ -120,8 +120,8 @@ void init_board()
     driver.init();
     // link the motor and the driver
     motor.linkDriver(&driver);
-    motor.voltage_sensor_align = 10;
-    motor.velocity_index_search = 4;
+    motor.voltage_sensor_align = 20;
+    motor.velocity_index_search = 3;
     motor.linkSensor(&sensor);
     // motor.phase_resistance = 0.0;
     // choose FOC modulation
@@ -201,16 +201,16 @@ void setup()
     Serial.begin(115200);
     motor.useMonitoring(Serial);
     // motor.controller = MotionControlType::angle_openloop;
-    motor.controller = MotionControlType::velocity_openloop;
-    // motor.controller = MotionControlType::torque;
+    // motor.controller = MotionControlType::velocity_openloop;
+    motor.controller = MotionControlType::torque;
     // motor.controller = MotionControlType::velocity;
     // motor.controller = MotionControlType::angle;
 
     motor.init();
-    // motor.initFOC();
+    motor.initFOC();
     delay(2000);
     // motor.initFOC(1.05, Direction::CW);
-    motor.initFOC(4.19, Direction::CW);
+    // motor.initFOC(4.19, Direction::CW);
     command.add('M', onMotor, "on motor command");
     command.add('T', doTarget, "set target");
     command.add('I', restart, "restart FOC");
@@ -235,7 +235,7 @@ void setup()
 void loop()
 {
     motor.move(target_velocity);
-    // motor.monitor();
-    // motor.loopFOC();
+    motor.monitor();
+    motor.loopFOC();
     command.run();
 }
