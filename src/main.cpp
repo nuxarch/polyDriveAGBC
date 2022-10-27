@@ -1,15 +1,18 @@
 #include <Arduino.h>
+#include <FreeRTOSConfig.h>
 #include <SimpleFOC.h>
 #include "DRV8301.h"
 
-// KONFIGURASI
-float resistansi_motor = 2.0; // naikkan per 0.1 untuk menaikkan torsi dan rpm maksimal
+// KONFIGURASI OPEN LOOP 3 parameter ini sampai motor mendapatkan torsi, namun juga tidak panas
+float resistansi_motor = 2.5; // naikkan per 0.1 untuk menaikkan torsi dan rpm maksimal
 float arus_maksimal = 5;
 float tegangan_baterai = 40;
 
 float target_velocity;
 int delay_test = 5000;
-#define THROTTLE_PIN 33
+String INFO;
+#define THROTTLE_PIN 34
+#define TEMPERATURE_PIN 33
 #define INH_A 25
 #define INH_B 26
 #define INH_C 27
@@ -33,6 +36,16 @@ void doC() { sensor.handleC(); }
 Commander command = Commander(Serial);
 void onMotor(char *cmd) { command.motor(&motor, cmd); }
 void doTarget(char *cmd) { command.scalar(&target_velocity, cmd); }
+
+xTaskHandle taskVelHandle;
+xTaskHandle taskPosHandle;
+xTaskHandle taskThrottleHandle;
+xTaskHandle taskProtectionHandle;
+
+int angle_max = 3.14 * 20;
+float board_temp;
+
+char ptrTaskList[250];
 
 void vel_PID()
 {
@@ -61,8 +74,6 @@ void limits()
     motor.current_limit = arus_maksimal; // 1.0;
 }
 
-xTaskHandle taskBlinkHandle;
-int angle_max = 3.14 * 20;
 void taskAngle(void *parameter)
 {
     while (1)
@@ -91,6 +102,31 @@ void taskVel(void *parameter)
         }
     }
 }
+void taskThrottle(void *)
+{
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    Serial.println("throttle task started");
+    for (;;)
+    {
+        target_velocity = map(analogRead(THROTTLE_PIN), 200, 4023, 0, 6);
+        INFO = "V[" + String(target_velocity) + "]";
+        // Serial.println("vel : " + String(target_velocity) + "rad/s");
+        vTaskDelay(100 / portTICK_PERIOD_MS);
+    }
+}
+void taskProtection(void *)
+{
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    Serial.println("protection task started");
+    for (;;)
+    {
+        board_temp = map(analogRead(TEMPERATURE_PIN), 0, 4035, 0, 100);
+        INFO += "T[" + String(board_temp) + "]";
+        // Serial.println("temp : " + String(board_temp) + " Celc");
+        Serial.println(INFO);
+        vTaskDelay(1000 / portTICK_PERIOD_MS);
+    }
+}
 void init_hall()
 {
     _delay(100);
@@ -99,7 +135,6 @@ void init_hall()
     sensor.enableInterrupts(doA, doB, doC);
     Serial.println("Sensor ready");
     _delay(500);
-    
 }
 void init_board()
 {
@@ -120,14 +155,13 @@ void init_board()
     driver.init();
     // link the motor and the driver
     motor.linkDriver(&driver);
-    motor.voltage_sensor_align = 20;
+    motor.voltage_sensor_align = 10;
     motor.velocity_index_search = 3;
     motor.linkSensor(&sensor);
     // motor.phase_resistance = 0.0;
     // choose FOC modulation
     // motor.foc_modulation = FOCModulationType::SinePWM;
 }
-
 void clear_error(char *cmd)
 {
     // gate_driver.begin(PWM_INPUT_MODE_3PWM);
@@ -191,6 +225,36 @@ void pos_mode(char *cmd)
 {
     motor.controller = MotionControlType::angle;
 }
+
+void throttle_mode(char *cmd)
+{
+    xTaskCreate(taskProtection, "task protection", 4000, NULL, 1, &taskProtectionHandle);
+    xTaskCreate(taskThrottle, "task throttle", 4000, NULL, 1, &taskThrottleHandle);
+
+    // Serial.println(eTaskGetState(taskThrottleHandle));
+    // Serial.println(eTaskGetState(taskProtectionHandle));
+}
+void kill_all_task(char *)
+{
+    Serial.println("kill all task");
+    Serial.println(eTaskGetState(taskThrottleHandle));
+    Serial.println(eTaskGetState(taskProtectionHandle));
+
+    vTaskDelay(1000 / portTICK_PERIOD_MS);
+    // vTaskDelete(taskPosHandle);
+    // vTaskDelete(taskVelHandle);
+    if (eTaskGetState(taskThrottleHandle) != eDeleted)
+    {
+        vTaskDelete(taskThrottleHandle);
+    }
+    if (eTaskGetState(taskProtectionHandle) != eDeleted)
+    {
+        vTaskDelete(taskProtectionHandle);
+    }
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+    vTaskDelay(100 / portTICK_PERIOD_MS);
+}
+
 void setup()
 {
     init_hall();
@@ -201,13 +265,13 @@ void setup()
     Serial.begin(115200);
     motor.useMonitoring(Serial);
     // motor.controller = MotionControlType::angle_openloop;
-    // motor.controller = MotionControlType::velocity_openloop;
-    motor.controller = MotionControlType::torque;
+    motor.controller = MotionControlType::velocity_openloop;
+    // motor.controller = MotionControlType::torque;
     // motor.controller = MotionControlType::velocity;
     // motor.controller = MotionControlType::angle;
 
     motor.init();
-    motor.initFOC();
+    // motor.initFOC();
     delay(2000);
     // motor.initFOC(1.05, Direction::CW);
     // motor.initFOC(4.19, Direction::CW);
@@ -218,10 +282,16 @@ void setup()
     command.add('C', clear_error, "clear fault controller");
     command.add('V', vel_mode, "set vel mode");
     command.add('P', pos_mode, "set pos mode");
+    command.add('H', throttle_mode, "throttle mode");
+    command.add('K', kill_all_task, "kill all task");
 
     Serial.println(F("Motor ready."));
     Serial.println(F("Set the target velocity using serial terminal:"));
     _delay(1000);
+
+    xTaskCreate(taskProtection, "task protection", 4000, NULL, 1, &taskProtectionHandle);
+    xTaskCreate(taskThrottle, "task throttle", 4000, NULL, 1, &taskThrottleHandle);
+
     // if (motor.controller == MotionControlType::angle)
     // {
     //     xTaskCreate(taskAngle, "task ANGLE", 4000, NULL, 1, NULL);
@@ -235,7 +305,7 @@ void setup()
 void loop()
 {
     motor.move(target_velocity);
-    motor.monitor();
+    // motor.monitor();
     motor.loopFOC();
     command.run();
 }
